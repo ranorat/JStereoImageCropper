@@ -10,8 +10,8 @@
 ・Javaソフトであるため、予めJRE（Java実行環境）のインストールをしてください。  
 　　①jarファイルをダブルクリックして実行。  
 　　②プロンプトでjar本体のある階層に移動して下記コマンドで起動  
-     cd "jarファイルの存在するフォルダ階層"  
-     java -jar JStereoImageCropper.jar  
+　　　cd "jarファイルの存在するフォルダ階層"  
+　　　java -jar JStereoImageCropper.jar  
 　・GUI起動後、立体視用の２つの画像を選択しD＆Dで読み込みます。  
 　・２つの画像の解像度が異なる場合、画像を読み込むことができません。  
 

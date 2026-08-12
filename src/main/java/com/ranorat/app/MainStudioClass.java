@@ -13,16 +13,18 @@ import javax.imageio.ImageIO;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
-import java.util.Stack;
 import java.net.URL;
 
 public class MainStudioClass extends JFrame {
 
-    private static final String VERSION = "1.0.0"; 
+    private static final String VERSION = "1.1.0"; 
     private JLabel imageLabel, infoLabel; 
     private JScrollPane scrollPane; 
     private BufferedImage currentImage;
-    private Stack<BufferedImage> undoBuffer = new Stack<>();
+    
+    // 履歴管理クラスへ分離
+    private final HistoryManager historyManager = new HistoryManager(30);
+    
     private BufferedImage originalImage1, originalImage2;
     private JTextField topField, bottomField, leftField, rightField;
     
@@ -57,8 +59,8 @@ public class MainStudioClass extends JFrame {
 
         JPanel configPanel = new JPanel(new GridLayout(1, 4, 10, 0));
         configPanel.setBorder(new TitledBorder("切り取りピクセル数設定 (ドット単位)"));
-        topField = new JTextField("10"); bottomField = new JTextField("10");
-        leftField = new JTextField("15"); rightField = new JTextField("15");
+        topField = new JTextField("10"); bottomField = new JTextField("0");
+        leftField = new JTextField("0"); rightField = new JTextField("0");
         configPanel.add(createFieldPanel("上 (Top):", topField));
         configPanel.add(createFieldPanel("下 (Bottom):", bottomField));
         configPanel.add(createFieldPanel("左 (Left):", leftField));
@@ -94,11 +96,12 @@ public class MainStudioClass extends JFrame {
         southPanel.add(versionLabel, BorderLayout.SOUTH);
         add(southPanel, BorderLayout.SOUTH);
 
+        // 共通メソッド applyTransform を活用したイベント割り当て
         cropBtn.addActionListener(e -> executeCropOnly());
         mirrorCropBtn.addActionListener(e -> executeMirrorCrop());
-        swapBtn.addActionListener(e -> executeSwapOnly());
-        rotateLeftBtn.addActionListener(e -> executeRotate(false));  
-        rotateRightBtn.addActionListener(e -> executeRotate(true));  
+        swapBtn.addActionListener(e -> applyTransform(ImageProcessor::swapOnly));
+        rotateLeftBtn.addActionListener(e -> applyTransform(img -> ImageProcessor.rotate(img, false)));  
+        rotateRightBtn.addActionListener(e -> applyTransform(img -> ImageProcessor.rotate(img, true)));  
         saveBtn.addActionListener(e -> saveImagesAllAsPng());
         zeroBtn.addActionListener(e -> {
             topField.setText("0"); bottomField.setText("0"); leftField.setText("0"); rightField.setText("0");
@@ -109,6 +112,16 @@ public class MainStudioClass extends JFrame {
         setMinimumSize(new Dimension(850, 520)); 
         setSize(1200, 850);
         setLocationRelativeTo(null);
+    }
+
+    /**
+     * 共通画像変換処理実行メソッド（履歴保持と画面更新の一括呼び出し）
+     */
+    private void applyTransform(ImageTransform transform) {
+        if (currentImage == null) return;
+        historyManager.push(currentImage);
+        currentImage = transform.apply(currentImage);
+        updateImageDisplay();
     }
 
     private JPanel createFieldPanel(String labelText, JTextField textField) {
@@ -127,8 +140,6 @@ public class MainStudioClass extends JFrame {
         return p;
     }
 
-//******************************************************************************
-
     private void setupDropTarget() {
         new DropTarget(this, DnDConstants.ACTION_COPY, new DropTargetAdapter() {
             @Override
@@ -143,13 +154,31 @@ public class MainStudioClass extends JFrame {
                             JOptionPane.showMessageDialog(MainStudioClass.this, "必ず2枚同時にドロップしてください。", "エラー", JOptionPane.ERROR_MESSAGE);
                             dtde.dropComplete(false); return;
                         }
-                        // ★ ドロップ時はパソコンのファイルなので、File用のメソッドを呼ぶ (変更なし)
                         loadImagesFromFiles(files.get(0), files.get(1));
                         dtde.dropComplete(true);
                     } else { dtde.rejectDrop(); }
                 } catch (Exception e) { e.printStackTrace(); dtde.rejectDrop(); }
             }
         });
+    }
+
+    // 画像初期化の共有処理
+    private void initStereoImages(BufferedImage raw1, BufferedImage raw2, String baseName) {
+        if (raw1 == null || raw2 == null || raw1.getWidth() != raw2.getWidth() || raw1.getHeight() != raw2.getHeight()) {
+            JOptionPane.showMessageDialog(this, "不適合な画像形式、または解像度不一致です。", "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        originalImage1 = new BufferedImage(raw1.getWidth(), raw1.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        originalImage1.createGraphics().drawImage(raw1, 0, 0, null);
+        originalImage2 = new BufferedImage(raw2.getWidth(), raw2.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        originalImage2.createGraphics().drawImage(raw2, 0, 0, null);
+
+        this.loadedBaseName = baseName;
+        historyManager.clear();
+        currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2);
+        imageLabel.setBackground(null);
+        updateImageDisplay();
     }
 
     public void loadImagesFromFiles(File f1, File f2) {
@@ -160,25 +189,31 @@ public class MainStudioClass extends JFrame {
             }
             BufferedImage raw1 = ImageIO.read(f1);
             BufferedImage raw2 = ImageIO.read(f2);
-            if (raw1 == null || raw2 == null || raw1.getWidth() != raw2.getWidth() || raw1.getHeight() != raw2.getHeight()) {
-                JOptionPane.showMessageDialog(this, "不適合な画像形式、または解像度不一致です。", "エラー", JOptionPane.ERROR_MESSAGE); return;
+
+            String name1 = f1.getName().replaceAll("\\.[^.]+$", "");
+            String name2 = f2.getName().replaceAll("\\.[^.]+$", "");
+            initStereoImages(raw1, raw2, name1 + "_" + name2);
+
+        } catch (IOException ex) { ex.printStackTrace(); }
+    }
+
+    public void loadImagesFromResources(String path1, String path2) {
+        try {
+            URL url1 = getClass().getResource(path1);
+            URL url2 = getClass().getResource(path2);
+
+            if (url1 == null || url2 == null) {
+                infoLabel.setText("初期画像リソース (" + path1 + " / " + path2 + ") が見つかりません。画像をドロップしてください。");
+                return;
             }
-            
-            originalImage1 = new BufferedImage(raw1.getWidth(), raw1.getHeight(), BufferedImage.TYPE_INT_ARGB);
-            originalImage1.createGraphics().drawImage(raw1, 0, 0, null);
-            originalImage2 = new BufferedImage(raw2.getWidth(), raw2.getHeight(), BufferedImage.TYPE_INT_ARGB);
-            originalImage2.createGraphics().drawImage(raw2, 0, 0, null);
 
-            String name1 = f1.getName();
-            String name2 = f2.getName();
-            if (name1.contains(".")) name1 = name1.substring(0, name1.lastIndexOf("."));
-            if (name2.contains(".")) name2 = name2.substring(0, name2.lastIndexOf("."));
-            loadedBaseName = name1 + "_" + name2;
+            BufferedImage raw1 = ImageIO.read(url1);
+            BufferedImage raw2 = ImageIO.read(url2);
 
-            undoBuffer.clear();
-            currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2);
-            imageLabel.setBackground(null);
-            updateImageDisplay();
+            String name1 = path1.substring(path1.lastIndexOf("/") + 1).replaceAll("\\.[^.]+$", "");
+            String name2 = path2.substring(path2.lastIndexOf("/") + 1).replaceAll("\\.[^.]+$", "");
+            initStereoImages(raw1, raw2, name1 + "_" + name2);
+
         } catch (IOException ex) { ex.printStackTrace(); }
     }
 
@@ -186,32 +221,16 @@ public class MainStudioClass extends JFrame {
         if (currentImage == null) return;
         int[] c = getCropValues(); if (c == null) return;
         if ((currentImage.getWidth()/2) - c[2] - c[3] <= 0 || currentImage.getHeight() - c[0] - c[1] <= 0) { showSizeError(); return; }
-        undoBuffer.push(ImageProcessor.deepCopy(currentImage));
-        currentImage = ImageProcessor.cropOnly(currentImage, c);
-        updateImageDisplay();
+        
+        applyTransform(img -> ImageProcessor.cropOnly(img, c));
     }
 
     private void executeMirrorCrop() {
         if (currentImage == null) return;
         int[] c = getCropValues(); if (c == null) return;
         if ((currentImage.getWidth()/2) - c[2] - c[3] <= 0 || currentImage.getHeight() - c[0] - c[1] <= 0) { showSizeError(); return; }
-        undoBuffer.push(ImageProcessor.deepCopy(currentImage));
-        currentImage = ImageProcessor.mirrorCrop(currentImage, c);
-        updateImageDisplay();
-    }
-
-    private void executeSwapOnly() {
-        if (currentImage == null) return;
-        undoBuffer.push(ImageProcessor.deepCopy(currentImage));
-        currentImage = ImageProcessor.swapOnly(currentImage);
-        updateImageDisplay();
-    }
-
-    private void executeRotate(boolean isRight) {
-        if (currentImage == null) return;
-        undoBuffer.push(ImageProcessor.deepCopy(currentImage));
-        currentImage = ImageProcessor.rotate(currentImage, isRight);
-        updateImageDisplay();
+        
+        applyTransform(img -> ImageProcessor.mirrorCrop(img, c));
     }
 
     private void saveImagesAllAsPng() {
@@ -256,14 +275,20 @@ public class MainStudioClass extends JFrame {
     }
 
     private void performUndo() {
-        if (!undoBuffer.isEmpty()) { currentImage = undoBuffer.pop(); updateImageDisplay(); }
-        else { JOptionPane.showMessageDialog(this, "これ以上戻れません。", "情報", JOptionPane.INFORMATION_MESSAGE); }
+        if (historyManager.canUndo()) { 
+            currentImage = historyManager.undo(currentImage); 
+            updateImageDisplay(); 
+        } else { 
+            JOptionPane.showMessageDialog(this, "これ以上戻れません。", "情報", JOptionPane.INFORMATION_MESSAGE); 
+        }
     }
 
     private void performReset() {
         if (originalImage1 == null || originalImage2 == null) return;
         if (JOptionPane.showConfirmDialog(this, "すべての履歴を破棄して初期状態に戻しますか？", "確認", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
-            undoBuffer.clear(); currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2); updateImageDisplay();
+            historyManager.clear(); 
+            currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2); 
+            updateImageDisplay();
         }
     }
 
@@ -283,7 +308,7 @@ public class MainStudioClass extends JFrame {
         BufferedImage leftWithDot = StereoDotPainter.drawTargetDot(currentImage.getSubimage(0, 0, w, h));
         BufferedImage rightWithDot = StereoDotPainter.drawTargetDot(currentImage.getSubimage(w, 0, w, h));
         imageLabel.setIcon(getScaledIcon(StereoDotPainter.buildCombinedWithDots(leftWithDot, rightWithDot)));
-        infoLabel.setText(String.format("【現在の状態】 1枚あたり: %d×%d px | 結合: %d×%d px (履歴: %d件)", w, h, currentImage.getWidth(), h, undoBuffer.size()));
+        infoLabel.setText(String.format("【現在の状態】 1枚あたり: %d×%d px | 結合: %d×%d px (履歴: %d件)", w, h, currentImage.getWidth(), h, historyManager.size()));
         imageLabel.revalidate(); imageLabel.repaint();
     }
 
@@ -301,62 +326,13 @@ public class MainStudioClass extends JFrame {
         JOptionPane.showMessageDialog(this, "切り取りサイズが画像サイズを超えています。", "サイズエラー", JOptionPane.ERROR_MESSAGE);
     }
 
-
-
-    //画像読み込みロジック (JAR内リソース用：起動時に連動) ★新しく追加
-    // ==========================================
-    public void loadImagesFromResources(String path1, String path2) {
-        try {
-            java.net.URL url1 = getClass().getResource(path1);
-            java.net.URL url2 = getClass().getResource(path2);
-
-            if (url1 == null || url2 == null) {
-                infoLabel.setText("初期画像リソース (" + path1 + " / " + path2 + ") が見つかりません。画像をドロップしてください。");
-                return;
-            }
-
-            // URLから直接画像を読み込む (JAR対応)
-            java.awt.image.BufferedImage raw1 = javax.imageio.ImageIO.read(url1);
-            java.awt.image.BufferedImage raw2 = javax.imageio.ImageIO.read(url2);
-
-            if (raw1 == null || raw2 == null || raw1.getWidth() != raw2.getWidth() || raw1.getHeight() != raw2.getHeight()) {
-                JOptionPane.showMessageDialog(this, "不適合な画像形式、または解像度不一致です。", "エラー", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            
-            // (以降のバッファ作成や画面更新、名前抽出のロジックはFile用とほぼ同じ)
-            originalImage1 = new java.awt.image.BufferedImage(raw1.getWidth(), raw1.getHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            originalImage1.createGraphics().drawImage(raw1, 0, 0, null);
-            originalImage2 = new java.awt.image.BufferedImage(raw2.getWidth(), raw2.getHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            originalImage2.createGraphics().drawImage(raw2, 0, 0, null);
-
-            String name1 = path1.substring(path1.lastIndexOf("/") + 1);
-            String name2 = path2.substring(path2.lastIndexOf("/") + 1);
-            if (name1.contains(".")) name1 = name1.substring(0, name1.lastIndexOf("."));
-            if (name2.contains(".")) name2 = name2.substring(0, name2.lastIndexOf("."));
-            loadedBaseName = name1 + "_" + name2;
-
-            undoBuffer.clear();
-            currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2);
-            imageLabel.setBackground(null);
-            updateImageDisplay();
-        } catch (java.io.IOException ex) {
-            ex.printStackTrace();
-        }
-    }
-
-
-
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             MainStudioClass studio = new MainStudioClass();
             studio.setVisible(true);
 
-//            studio.loadImagesFromFiles(new File("image1.png"), new File("image2.png"));
-
-            // ★ 起動時はJAR内部の「リソースパス」から読み込む
+            // 起動時はJAR内部のリソースパスから読み込む
             studio.loadImagesFromResources("/resources/images/image1.png", "/resources/images/image2.png");
-
         });
     }
 }

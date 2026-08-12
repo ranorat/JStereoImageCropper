@@ -50,7 +50,7 @@ public class ImageProcessor {
         return buildCombinedImage(currentRight, currentLeft);
     }
 
-    // 左右同時回転（タイポバグ修正版）
+    // 左右同時回転
     public static BufferedImage rotate(BufferedImage currentImage, boolean isRight) {
         int halfWidth = currentImage.getWidth() / 2;
         int height = currentImage.getHeight();

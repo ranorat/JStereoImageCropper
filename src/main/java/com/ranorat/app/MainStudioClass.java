@@ -17,16 +17,17 @@ import java.net.URL;
 
 public class MainStudioClass extends JFrame {
 
-    private static final String VERSION = "1.0.1"; 
+    private static final String VERSION = "1.0.2"; 
     private JLabel imageLabel, infoLabel; 
     private JScrollPane scrollPane; 
     private BufferedImage currentImage;
     
-    // 履歴管理クラスへ分離
     private final HistoryManager historyManager = new HistoryManager(30);
-    
     private BufferedImage originalImage1, originalImage2;
-    private JTextField topField, bottomField, leftField, rightField;
+    
+    // クロップ用フィールド
+    private JTextField cropAmountField;
+    private JRadioButton rbOuter, rbInner, rbLeftLeft, rbRightRight, rbTLBR, rbBLTR, rbTopTop, rbBotBot;
     
     private File lastSavedDirectory = null; 
     private String loadedBaseName = "processed_image";
@@ -57,66 +58,131 @@ public class MainStudioClass extends JFrame {
             public void componentResized(java.awt.event.ComponentEvent e) { updateImageDisplay(); }
         });
 
-        JPanel configPanel = new JPanel(new GridLayout(1, 4, 10, 0));
-        configPanel.setBorder(new TitledBorder("切り取りピクセル数設定 (ドット単位)"));
-        topField = new JTextField("10"); bottomField = new JTextField("0");
-        leftField = new JTextField("0"); rightField = new JTextField("0");
-        configPanel.add(createFieldPanel("上 (Top):", topField));
-        configPanel.add(createFieldPanel("下 (Bottom):", bottomField));
-        configPanel.add(createFieldPanel("左 (Left):", leftField));
-        configPanel.add(createFieldPanel("右 (Right):", rightField));
+        // --- クロップ設定パネル (真ん中寄せレイアウト) ---
+        JPanel configPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5)); // 水平間隔を広めにとる
+        configPanel.setBorder(new TitledBorder("クロップ設定"));
 
-        JPanel btnPanel = new JPanel(new GridLayout(2, 4, 8, 8));
-        btnPanel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
 
-        JButton cropBtn = new JButton("4辺通常クロップ");
-        JButton mirrorCropBtn = new JButton("上下左右対称クロップ"); 
-        JButton swapBtn = new JButton("左右場所入れ替え");
-        JButton saveBtn = new JButton("PNG画像を一括保存 (3枚)");
-        JButton rotateLeftBtn = new JButton("同時90度左回転");
-        JButton rotateRightBtn = new JButton("同時90度右回転");
-        JButton zeroBtn = new JButton("入力をすべて0にする");
-        
-        JPanel utilityPanel = new JPanel(new GridLayout(1, 2, 5, 0));
-        JButton undoBtn = new JButton("戻る (Undo)");
-        JButton resetBtn = new JButton("初期化 (Reset)");
-        utilityPanel.add(undoBtn); utilityPanel.add(resetBtn);
+        // 1. ラジオボタン群を右寄せで配置するコンテナ
+        JPanel radioGrid = new JPanel(new GridLayout(4, 2, 5, 2)); // 2列の距離を5に設定
 
-        btnPanel.add(cropBtn); btnPanel.add(mirrorCropBtn); btnPanel.add(swapBtn); btnPanel.add(saveBtn);
-        btnPanel.add(rotateLeftBtn); btnPanel.add(rotateRightBtn); btnPanel.add(zeroBtn); btnPanel.add(utilityPanel);
+        // 1. 左側: ラジオボタン (2列x4行)
+        rbOuter = new JRadioButton("端同士", true);
+        rbInner = new JRadioButton("内側同士");
+        rbLeftLeft = new JRadioButton("左辺同士");
+        rbRightRight = new JRadioButton("右辺同士");
+        rbTLBR = new JRadioButton("左上/右下");
+        rbBLTR = new JRadioButton("左下/右上");
+        rbTopTop = new JRadioButton("上辺同士");
+        rbBotBot = new JRadioButton("下辺同士");
 
-        JLabel versionLabel = new JLabel("JStereoImageCropper v" + VERSION + " | (c) 2026 ranorat", SwingConstants.RIGHT);
-        versionLabel.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        versionLabel.setForeground(Color.GRAY);
-        versionLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 15));
+        ButtonGroup group = new ButtonGroup();
+        for (JRadioButton rb : new JRadioButton[]{rbOuter, rbInner, rbLeftLeft, rbRightRight, rbTLBR, rbBLTR, rbTopTop, rbBotBot}) {
+            group.add(rb);
+            radioGrid.add(rb);
+        }
 
-        JPanel southPanel = new JPanel(new BorderLayout());
+        // 2. 右側のコントロールパネル (入力フィールドとボタン)
+        JPanel controlPanel = new JPanel(new GridLayout(2, 1, 5, 5));
+
+
+        // 入力フィールド部
+        cropAmountField = new JTextField("10", 6);
+        // 空欄時0補完処理
+        cropAmountField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                if (cropAmountField.getText().trim().isEmpty()) cropAmountField.setText("0");
+            }
+        });
+
+        JPanel inputPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        inputPanel.add(new JLabel("ピクセル数:"));
+        inputPanel.add(cropAmountField);
+
+        // 実行ボタン
+        JButton cropExecuteBtn = new JButton("クロップ実行");
+        cropExecuteBtn.setPreferredSize(new Dimension(100, 30));
+
+        controlPanel.add(inputPanel);
+        controlPanel.add(cropExecuteBtn);
+
+        // 3. すべてを FlowLayout(CENTER) のパネルに格納して配置
+        configPanel.add(radioGrid);
+        configPanel.add(controlPanel);
+
+        // --- SOUTH パネルの全体構成 ---
+        JPanel southPanel = new JPanel(new BorderLayout(5, 5));
+
+        // 1. クロップ設定パネル (North)
         southPanel.add(configPanel, BorderLayout.NORTH);
-        southPanel.add(btnPanel, BorderLayout.CENTER);
-        southPanel.add(versionLabel, BorderLayout.SOUTH);
-        add(southPanel, BorderLayout.SOUTH);
 
-        // 共通メソッド applyTransform を活用したイベント割り当て
-        cropBtn.addActionListener(e -> executeCropOnly());
-        mirrorCropBtn.addActionListener(e -> executeMirrorCrop());
-        swapBtn.addActionListener(e -> applyTransform(ImageProcessor::swapOnly));
+        // 2. ボタン操作パネル群 (Center)
+        JPanel operationsPanel = new JPanel(new GridLayout(2, 1, 5, 5));
+        
+        // グループA: 変形・操作
+        JPanel transformPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        transformPanel.setBorder(new TitledBorder("画像変形・操作"));
+        JButton rotateLeftBtn = new JButton("左90°回転");
+        JButton rotateRightBtn = new JButton("右90°回転");
+        JButton swapBtn = new JButton("左右入れ替え");
+        JButton zeroBtn = new JButton("数値を0に");
+        transformPanel.add(rotateLeftBtn);
+        transformPanel.add(rotateRightBtn);
+        transformPanel.add(swapBtn);
+        transformPanel.add(zeroBtn);
+
         rotateLeftBtn.addActionListener(e -> applyTransform(img -> ImageProcessor.rotate(img, false)));  
         rotateRightBtn.addActionListener(e -> applyTransform(img -> ImageProcessor.rotate(img, true)));  
-        saveBtn.addActionListener(e -> saveImagesAllAsPng());
-        zeroBtn.addActionListener(e -> {
-            topField.setText("0"); bottomField.setText("0"); leftField.setText("0"); rightField.setText("0");
-        });
-        undoBtn.addActionListener(e -> performUndo());
-        resetBtn.addActionListener(e -> performReset());
+        swapBtn.addActionListener(e -> applyTransform(ImageProcessor::swapOnly));
+        zeroBtn.addActionListener(e -> cropAmountField.setText("0"));
 
-        setMinimumSize(new Dimension(850, 520)); 
-        setSize(1200, 850);
+        // グループB: 履歴・保存
+        JPanel historyPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        historyPanel.setBorder(new TitledBorder("履歴・保存"));
+        JButton undoBtn = new JButton("Undo");
+        JButton redoBtn = new JButton("Redo");
+        JButton resetBtn = new JButton("初期化");
+        JButton saveBtn = new JButton("PNG一括保存");
+        historyPanel.add(undoBtn); historyPanel.add(redoBtn);
+        historyPanel.add(resetBtn); historyPanel.add(saveBtn);
+
+        undoBtn.addActionListener(e -> performUndo());
+        redoBtn.addActionListener(e -> performRedo()); // 追加
+        resetBtn.addActionListener(e -> performReset());
+        saveBtn.addActionListener(e -> saveImagesAllAsPng());
+
+        operationsPanel.add(transformPanel);
+        operationsPanel.add(historyPanel);
+
+        southPanel.add(operationsPanel, BorderLayout.CENTER);
+
+        // バージョン情報 (South)
+        JLabel versionLabel = new JLabel("JStereoImageCropper v" + VERSION + " | (c) 2026 ranorat", SwingConstants.RIGHT);
+        southPanel.add(versionLabel, BorderLayout.SOUTH);
+        
+        add(southPanel, BorderLayout.SOUTH);
+
+
+        setMinimumSize(new Dimension(850, 600)); 
+        setSize(1200, 900);
         setLocationRelativeTo(null);
     }
 
-    /**
-     * 共通画像変換処理実行メソッド（履歴保持と画面更新の一括呼び出し）
-     */
+    private void executeSelectiveCrop() {
+        try {
+            int val = Integer.parseInt(cropAmountField.getText().trim());
+            String mode = rbOuter.isSelected() ? "outer" : rbInner.isSelected() ? "inner" :
+                          rbLeftLeft.isSelected() ? "leftleft" : rbRightRight.isSelected() ? "rightright" :
+                          rbTLBR.isSelected() ? "tlbr" : rbBLTR.isSelected() ? "bltr" :
+                          rbTopTop.isSelected() ? "toptop" : "botbot";
+            
+            applyTransform(img -> ImageProcessor.executeSelectiveCrop(img, mode, val));
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "0以上の整数を入力してください。", "入力エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void applyTransform(ImageTransform transform) {
         if (currentImage == null) return;
         historyManager.push(currentImage);
@@ -124,22 +190,7 @@ public class MainStudioClass extends JFrame {
         updateImageDisplay();
     }
 
-    private JPanel createFieldPanel(String labelText, JTextField textField) {
-        JPanel p = new JPanel(new BorderLayout(5, 0));
-        p.add(new JLabel(labelText), BorderLayout.WEST);
-        p.add(textField, BorderLayout.CENTER);
-
-        textField.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                if (textField.getText().trim().isEmpty()) {
-                    textField.setText("0");
-                }
-            }
-        });
-        return p;
-    }
-
+    // --- 以下、既存のヘルパーメソッド ---
     private void setupDropTarget() {
         new DropTarget(this, DnDConstants.ACTION_COPY, new DropTargetAdapter() {
             @Override
@@ -162,7 +213,6 @@ public class MainStudioClass extends JFrame {
         });
     }
 
-    // 画像初期化の共有処理
     private void initStereoImages(BufferedImage raw1, BufferedImage raw2, String baseName) {
         if (raw1 == null || raw2 == null || raw1.getWidth() != raw2.getWidth() || raw1.getHeight() != raw2.getHeight()) {
             JOptionPane.showMessageDialog(this, "不適合な画像形式、または解像度不一致です。", "エラー", JOptionPane.ERROR_MESSAGE);
@@ -217,22 +267,6 @@ public class MainStudioClass extends JFrame {
         } catch (IOException ex) { ex.printStackTrace(); }
     }
 
-    private void executeCropOnly() {
-        if (currentImage == null) return;
-        int[] c = getCropValues(); if (c == null) return;
-        if ((currentImage.getWidth()/2) - c[2] - c[3] <= 0 || currentImage.getHeight() - c[0] - c[1] <= 0) { showSizeError(); return; }
-        
-        applyTransform(img -> ImageProcessor.cropOnly(img, c));
-    }
-
-    private void executeMirrorCrop() {
-        if (currentImage == null) return;
-        int[] c = getCropValues(); if (c == null) return;
-        if ((currentImage.getWidth()/2) - c[2] - c[3] <= 0 || currentImage.getHeight() - c[0] - c[1] <= 0) { showSizeError(); return; }
-        
-        applyTransform(img -> ImageProcessor.mirrorCrop(img, c));
-    }
-
     private void saveImagesAllAsPng() {
         if (currentImage == null) return;
         int dotChoice = JOptionPane.showConfirmDialog(this, "保存する【結合画像】に「補助点」を書き込みますか？\n（※左右単体画像には補助点は書き込まれません）", "選択", JOptionPane.YES_NO_CANCEL_OPTION);
@@ -283,15 +317,26 @@ public class MainStudioClass extends JFrame {
         }
     }
 
+    // --- メソッドの追加 ---
+    private void performRedo() {
+        if (historyManager.canRedo()) {
+            currentImage = historyManager.redo(currentImage);
+            updateImageDisplay();
+        } else {
+            JOptionPane.showMessageDialog(this, "これ以上進めません。", "情報", JOptionPane.INFORMATION_MESSAGE);
+        }
+    }
+
+
     private void performReset() {
         if (originalImage1 == null || originalImage2 == null) return;
         if (JOptionPane.showConfirmDialog(this, "すべての履歴を破棄して初期状態に戻しますか？", "確認", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
             historyManager.clear(); 
             currentImage = ImageProcessor.buildCombinedImage(originalImage1, originalImage2); 
+            cropAmountField.setText("10");
             updateImageDisplay();
         }
     }
-
     private ImageIcon getScaledIcon(BufferedImage src) {
         int imgW = src.getWidth(), imgH = src.getHeight();
         int panelW = scrollPane.getViewport().getWidth() - 10, panelH = scrollPane.getViewport().getHeight() - 10;
@@ -312,26 +357,10 @@ public class MainStudioClass extends JFrame {
         imageLabel.revalidate(); imageLabel.repaint();
     }
 
-    private int[] getCropValues() {
-        try {
-            int[] vals = { Integer.parseInt(topField.getText().trim()), Integer.parseInt(bottomField.getText().trim()), Integer.parseInt(leftField.getText().trim()), Integer.parseInt(rightField.getText().trim()) };
-            if (vals[0] < 0 || vals[1] < 0 || vals[2] < 0 || vals[3] < 0) throw new NumberFormatException();
-            return vals;
-        } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "0以上の整数を入力してください。", "入力エラー", JOptionPane.ERROR_MESSAGE); return null;
-        }
-    }
-
-    private void showSizeError() {
-        JOptionPane.showMessageDialog(this, "切り取りサイズが画像サイズを超えています。", "サイズエラー", JOptionPane.ERROR_MESSAGE);
-    }
-
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             MainStudioClass studio = new MainStudioClass();
             studio.setVisible(true);
-
-            // 起動時はJAR内部のリソースパスから読み込む
             studio.loadImagesFromResources("/resources/images/image1.png", "/resources/images/image2.png");
         });
     }

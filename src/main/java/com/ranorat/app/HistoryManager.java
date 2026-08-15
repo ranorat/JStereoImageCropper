@@ -10,6 +10,7 @@ import java.util.Deque;
 public class HistoryManager {
 
     private final Deque<BufferedImage> undoStack = new ArrayDeque<>();
+    private final Deque<BufferedImage> redoStack = new ArrayDeque<>(); // 追加
     private final int maxHistorySize;
 
     public HistoryManager() {
@@ -29,6 +30,7 @@ public class HistoryManager {
             undoStack.removeLast(); // メモリ溢れ防止のため最古の履歴を破棄
         }
         undoStack.push(ImageProcessor.deepCopy(image));
+        redoStack.clear(); // 新しい操作が行われたらRedoは無効化する
     }
 
     /**
@@ -36,7 +38,16 @@ public class HistoryManager {
      */
     public BufferedImage undo(BufferedImage current) {
         if (canUndo()) {
+            redoStack.push(ImageProcessor.deepCopy(current)); // 現在の状態をRedo用に保存
             return undoStack.pop();
+        }
+        return current;
+    }
+
+    public BufferedImage redo(BufferedImage current) {
+        if (canRedo()) {
+            undoStack.push(ImageProcessor.deepCopy(current)); // 現在の状態をUndo用に保存
+            return redoStack.pop();
         }
         return current;
     }
@@ -45,8 +56,13 @@ public class HistoryManager {
         return !undoStack.isEmpty();
     }
 
+    public boolean canRedo() {
+        return !redoStack.isEmpty();
+    }
+
     public void clear() {
         undoStack.clear();
+        redoStack.clear();
     }
 
     public int size() {

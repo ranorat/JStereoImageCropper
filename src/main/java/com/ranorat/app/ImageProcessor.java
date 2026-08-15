@@ -104,4 +104,37 @@ public class ImageProcessor {
         g.dispose();
         return copy;
     }
+
+
+    public static BufferedImage executeSelectiveCrop(BufferedImage currentImage, String mode, int val) {
+        int w = currentImage.getWidth() / 2;
+        int h = currentImage.getHeight();
+        
+        BufferedImage left = currentImage.getSubimage(0, 0, w, h);
+        BufferedImage right = currentImage.getSubimage(w, 0, w, h);
+        
+        int nW = w; int nH = h;
+        int lx = 0, ly = 0, rx = 0, ry = 0;
+
+        switch (mode) {
+            case "outer":   // a: 端同士 (左画像左辺, 右画像右辺)
+                return buildCombinedImage(left.getSubimage(val, 0, w-val, h), right.getSubimage(0, 0, w-val, h));
+            case "inner":   // b: 内側同士 (左画像右辺, 右画像左辺)
+                return buildCombinedImage(left.getSubimage(0, 0, w-val, h), right.getSubimage(val, 0, w-val, h));
+            case "leftleft": // c: 左側同士 (左画像左辺, 右画像左辺)
+                return buildCombinedImage(left.getSubimage(val, 0, w-val, h), right.getSubimage(val, 0, w-val, h));
+            case "rightright": // d: 右側同士 (左画像右辺, 右画像右辺)
+                return buildCombinedImage(left.getSubimage(0, 0, w-val, h), right.getSubimage(0, 0, w-val, h));
+            case "tlbr":    // e: 左上/右下
+                return buildCombinedImage(left.getSubimage(0, val, w, h-val), right.getSubimage(0, 0, w, h-val));
+            case "bltr":    // f: 左下/右上
+                return buildCombinedImage(left.getSubimage(0, 0, w, h-val), right.getSubimage(0, val, w, h-val));
+            case "toptop":  // g: 上辺同士
+                return buildCombinedImage(left.getSubimage(0, val, w, h-val), right.getSubimage(0, val, w, h-val));
+            case "botbot":  // h: 下辺同士
+                return buildCombinedImage(left.getSubimage(0, 0, w, h-val), right.getSubimage(0, 0, w, h-val));
+            default: return currentImage;
+        }
+    }
+
 }

@@ -104,6 +104,9 @@ public class MainStudioClass extends JFrame {
         JButton cropExecuteBtn = new JButton("クロップ実行");
         cropExecuteBtn.setPreferredSize(new Dimension(100, 30));
 
+        // ▼ 以下のリスナーを追加して executeSelectiveCrop() を呼び出すようにします
+        cropExecuteBtn.addActionListener(e -> executeSelectiveCrop());
+
         controlPanel.add(inputPanel);
         controlPanel.add(cropExecuteBtn);
 

@@ -17,7 +17,7 @@ import java.net.URL;
 
 public class MainStudioClass extends JFrame {
 
-    private static final String VERSION = "1.0.2"; 
+    private static final String VERSION = "1.0.3"; 
     private JLabel imageLabel, infoLabel; 
     private JScrollPane scrollPane; 
     private BufferedImage currentImage;
